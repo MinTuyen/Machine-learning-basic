@@ -1,5 +1,5 @@
 ---
-title: "The Final Project"
+title: "Decision Tree, SVM"
 author: "Winter Nguyen (htn937)"
 date: "`r Sys.Date()`"
 output: pdf_document
