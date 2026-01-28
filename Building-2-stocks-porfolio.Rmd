@@ -1,5 +1,5 @@
 ---
-title: "Project #1"
+title: "2 Stocks Analysis"
 author: "Winter Nguyen - htn937"
 date: "`r Sys.Date()`"
 output: pdf_document
