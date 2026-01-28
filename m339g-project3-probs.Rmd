@@ -1,0 +1,560 @@
+---
+title: "Weekly Return"
+author: "Winter Nguyen"
+date: "`r Sys.Date()`"
+output: pdf_document
+urlcolor: blue
+---
+<!-- The author of this template is Dr. Gordan Zitkovic.-->
+<!-- The code chunk below contains some settings that will  -->
+<!-- make your R code look better in the output pdf file.  -->
+<!-- If you are curious about what each option below does, -->
+<!-- go to https://yihui.org/knitr/options/ -->
+<!-- If not, feel free to disregard everything ...  -->
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  fig.align="center",
+  fig.pos="t",
+  strip.white = TRUE
+)
+```
+<!-- ... down to here. -->
+
+---
+Summary:
+
+This project analyzes the Weekly stock market dataset (1990–2010) to predict whether the market will go Up or Down using several classification methods. After exploring the data, Lag2 appears to be the only meaningful predictor. Logistic regression using all variables performs poorly, but simplifying the model to use only Lag2 increases test accuracy to 62.5%. LDA and QDA models using Lag2 achieve similar performance, while Naive Bayes and KNN perform worse due to data imbalance and overfitting. Across all experiments, including models with interactions, Volume, Lag1, and polynomial transformations, the best results consistently come from simple models driven by Lag2, confirming that it provides the strongest predictive signal.
+
+A data frame with 1089 observations on the following 9 variables:
+
+Year: The year that the observation was recorded
+
+Lag1: Percentage return for previous week
+
+Lag2: Percentage return for 2 weeks previous
+
+Lag3: Percentage return for 3 weeks previous
+
+Lag4: Percentage return for 4 weeks previous
+
+Lag5: Percentage return for 5 weeks previous
+
+Volume: Volume of shares traded (average number of daily shares traded in billions)
+
+Today: Percentage return for this week
+
+Direction: A factor with levels Down and Up indicating whether the market had a positive or negative return on a given week.
+
+**(a) Produce some numerical and graphical summaries of the Weekly data.**
+
+```{r}
+library(ISLR2)
+dim(Weekly)
+summary(Weekly)
+cor(Weekly[1:8]) # correlation between variables except Direction
+```
+In general, the percentage returns for each of the five previous trading days have the approximately equal 
+
++ Mean: around `r 0.24`% 
+
++ 1st quarter : `r -1.16`%
+
++ 3rd quarter : `r 1.4`%
+
++ Range from `r -18.195`% to `r 12.026`%
+
+
+So we expect to see a similar shape for each of the variables. 
+
+```{r}
+attach(Weekly[1:8])
+col_Direction=c("red","green")[unclass(Weekly$Direction)]
+
+plot(Weekly$Volume, type="l", col="red",
+     xlab="Time (Number of day since 1990",
+     ylab="Volume (in billions)",
+     main="Daily Volume (1990-2010)")
+
+pairs(Weekly[1:8],
+      bg=col_Direction,
+      main="Pairwise Plot - Relationship Between Variables",
+      pch=21)
+```
+
+From the scatterplots and correlation matrix, we observe that Volume increases with Year, while the remaining predictors show very low correlation with each other. Although low correlation does not guarantee independence, it suggests weak linear relationships among these variables.
+
+**(b) Use the full data set to perform a logistic regression with
+Direction as the response and the five lag variables plus Volume
+as predictors. Use the summary function to print the results.**
+```{r}
+glm.fits=glm(Weekly$Direction ~ Lag1 + Lag2 +Lag3+Lag4+Lag5+Volume, family = binomial, data=Weekly)
+summary(glm.fits)
+```
+There is statistically significant relationship between Lag2 and Direction as the p-value is `r 0.0296` which is less than 0.05. Since there is no correlation between predictor variables, we can say that Lag2 is not under effect of multicolinearity. Let us use VIF to confirm
+
+```{r}
+library(car)
+vif(glm.fits)
+```
+
+VIF is approximately 1, confirming above statement.
+
+```{r}
+plot(Weekly$Direction, Lag2,
+     col=c("red","green"),
+     xlab="Direction",
+     ylab="Lag2")
+
+```
+**(c) Compute the confusion matrix and overall fraction of correct
+predictions**
+```{r}
+# Confusion Matrix
+glm.probs=predict(glm.fits,type="response")
+contrasts(Weekly$Direction)
+glm.pred=rep("Down", 1089)
+glm.pred[glm.probs>0.5]="Up"
+table_glm=table(glm.pred, Weekly$Direction)
+table_glm
+correction_glm=mean(glm.pred==Weekly$Direction)
+er_rate=1-correction_glm
+
+
+#always predict up correction percentage
+always_predict_up=sum(Weekly$Direction == "Up")/1089
+```
+So, the logistic regression model correctly predicted `r round((1-er_rate)*100,2)`% of the time (with error training rate to be `r  round(er_rate*100,2)`%, let us denote this model "Model A". By observation we see that.
+
+-The model is biased toward predicting "Up" ( `r table_glm[3]+table_glm[4]` "Up", while only `r table_glm[1]+table_glm[2]` "Down"). So, it is very bad at predicting the "Down" days
+
+-If we always predict "Up" then the percentage correct is `r round(always_predict_up*100,2)`, so the model is only `r round(er_rate*100,2)-round(always_predict_up*100,2)`% better.
+
+However, the training error rate often underestimate the test error rate. Therefore, split data into training set and test set, then fit data on the training set and use that model to predict data in test set would give us a more realistic error rate. 
+
+```{r}
+train=(Weekly$Year < 2009 )
+Weekly.test=Weekly[!train,]
+Direction.test=Weekly$Direction[!train]
+glm.fits.train=glm(Weekly$Direction ~ Lag1 + Lag2 +Lag3+Lag4+Lag5+
+                     Volume, family = binomial, data=Weekly, subset = train)
+glm.probs.train=predict(glm.fits.train, Weekly.test, type="response")
+glm.pred.train=rep("Down", length(Direction.test))
+glm.pred.train[glm.probs.train >0.5]="Up"
+table(glm.pred.train,
+      Direction.test)
+correction_glm_fix=mean(glm.pred.train==Direction.test)
+correction_glm_fix
+```
+So, the correction rate is `r round(correction_glm_fix*100,2)` with the test error rate to be `r round((1-correction_glm_fix)*100,2)` %, increase in test error is expected and in fact this give a more reliable information than previous model. In general, this model is worse than just predict "Up" all the time. I will discuss more in the incoming question. Let us denote this model "Model B"
+
+
+**(d) Now fit the logistic regression model using a training data period
+from 1990 to 2008, with Lag2 as the only predictor. Compute the
+confusion matrix and the overall fraction of correct predictions
+for the held out data (that is, the data from 2009 and 2010).**
+
+```{r}
+glm.fits.train2=glm(Weekly$Direction ~Lag2 , family = binomial, data=Weekly, subset = train)
+glm.probs.train2=predict(glm.fits.train2, Weekly.test, type="response")
+glm.pred.train2=rep("Down", length(Direction.test))
+glm.pred.train2[glm.probs.train2 >0.5]="Up"
+table(glm.pred.train2,
+      Direction.test)
+correction_glm2=mean(glm.pred.train2==Direction.test)
+correction_glm2
+correctionrate.data <- data.frame(
+  ModelA = correction_glm,
+  ModelB = correction_glm_fix,
+  ModelC = correction_glm2,
+  row.names="Correction Rate"
+)
+correctionrate.data
+
+```
+The correction rate for this model (Lag2 as the only variable, denoted Model C) is `r round(correction_glm2,4)*100`% which is greater than the correction rate of splited training/test sets model using all variable (Model B) and the model using full data as training set (Model A). As mentioned above, it would be more realistic to compared training Model B and C because error rate in Model A is underestimated. Overall, Model C performed better with higher correction rate, indicate Lag2 should be prioritized when predict Direction.
+
+**(e) Repeat (d) using LDA.**
+```{r}
+library(MASS)
+lda.fit=lda(Direction~Lag2, data=Weekly, subset=train)
+lda.fit
+plot(lda.fit)
+```
+The out put indicates that prior propability for "Down" is 44.1% and for "Up" is 55.8% . In order words, 44.1% of trainining observations correspond to days during which the market **went down**. 
+```{r}
+lda.pred=predict(lda.fit, Weekly.test)
+lda.class=lda.pred$class
+table(lda.class, Direction.test)
+correction_lda=mean(lda.class==Direction.test) # correction rate
+correction_lda
+
+#number of days LDA predicted "Down"
+down_days=sum(lda.pred$posterior[,1]>=0.5)
+
+#number of days LDA predicted "Up"
+up_days=sum(lda.pred$posterior[,1]<0.5)
+
+
+```
+
+Using the same split in d), LDA model gives the correction rate to be 58.7%, the model predicted correctly 58.7% of the time. The model predicted Down for `r down_days` days, and Up for `r up_days` days. Since Up days is larger than Down days, the market is on up trend overall. However, it doesn't nessacary mean the market has positive return.
+
+Lag2 represents the market return from two weeks ago. The LDA group means show that two weeks prior to an Up week, the market return averages +0.26%, while two weeks prior to a Down week, the return averages -0.036%. Therefore, positive returns from two weeks earlier make an Up week more likely.
+
+**(f) Repeat (d) using QDA.**
+```{r}
+qda.fit=qda(Direction~Lag2, data=Weekly, subset=train)
+qda.fit
+qda.class=predict(qda.fit, Weekly.test)$class # Up - Down
+table(qda.class, Direction.test)
+cat("The percentage of correct prediction")
+
+correction_qda=mean(qda.class==Direction.test)
+correction_qda
+
+```
+Prior probabilities of QDA model are 44.8% for Down and 55.2% for "Up" (of training data)
+
+The QDA model estimates separate normal distributions for Up and Down weeks. The group means indicate that two weeks prior to an Up week, the average return (Lag2) is +0.26%, whereas two weeks prior to a Down week, the average Lag2 return is -0.036%
+
+so, if Lag2 is high (positive), QDA is more likely to predict “Up”.
+If Lag2 is negative, QDA is more likely to predict “Down”
+
+Notice the QDA predicts every week as "Up", the overall correction rate is 58.65% which is affected by the fact that "Up" weeks are more common in the test set.
+
+**(g) Repeat (d) using KNN with K = 1.**
+
+```{r}
+#Implement KNN wiht k = 1
+library(class)
+train.X=as.matrix(Weekly$Lag2[train]) #knn need matrices
+test.X=as.matrix(Weekly$Lag2[!train])
+train.Direction=Weekly$Direction[train]
+set.seed(1)
+knn.pred=knn(train.X, test.X, train.Direction,k=1)
+table(knn.pred, Direction.test)
+
+correction_knn=mean(knn.pred==Direction.test)
+
+cat("Percentage of correction:",correction_knn)
+```
+For K-Nearest-Neighbors, only 50% of the observations are correctly predicted which is not good compared to LDA, QDA, and logistic regression. However, this maybe the result of overfiting data because K=1 results in overly flexible fit to the data. Let us try different K.
+
+```{r}
+set.seed(100)
+accuracy_y=c()
+
+for (i in 1:30) {
+  knn.pred=knn(train.X, test.X, train.Direction,k=i)
+  accuracy=mean(knn.pred == Direction.test) 
+  accuracy_y=c(accuracy_y, accuracy)}
+
+
+plot(1:30, accuracy_y,
+     main="Testing Different K",
+     xlab="K",
+     ylab="Accuracy")
+
+# since we have the "Testing Different K" graph
+# and we only care about the maximum point,
+# I would only print the highest accuracy and
+# its associated k
+text(which.max(accuracy_y),max(accuracy_y),
+     labels=paste0("(",which.max(accuracy_y),",",round(max(accuracy_y),3),")"),
+     pos=1,
+     cex=0.8)
+     
+cat("Percentage of correction for k=", which.max(accuracy_y), ":", max(accuracy_y))
+
+```
+K=4 is good choice since after that the percentage of correction is reduced or doesn't change much. The best K should be K=20 produce the most accurate result but only for this set of data (fixed using set.seed function). We can determine the best K using Cross Validation method, and that require the different splits of training set and the test set. I will implement this method in the incoming question.
+
+**(h) Repeat (d) using naive Bayes**
+
+As stated above, we assume independent predictors (since the correlations are relatively low), and has the normal distribution. So, we can use the function naiveBayes. 
+```{r}
+library(e1071)
+nb.fit=naiveBayes(Direction~Lag2, data=Weekly, subset=train)
+nb.fit
+
+```
+Prior probabilities of Bayes model are 44.8% for "Down" and 55.2% for "Up" (of training data)
+
+Naive Bayes assumes Lag2 is normally distributed within each class. Up weeks have a higher mean Lag2 (0.26) than Down weeks (–0.036), so larger Lag2 values indicate a higher probability of an Up week. Variances for Lag2 are similar between the classes (2.19 and 2.31).
+
+```{r}
+#visualize the two
+mu_down =-0.03568254
+sd_down = 2.199504
+
+mu_up = 0.26036581
+sd_up = 2.317485
+
+x=seq(-10,10,length=500)
+plot(x, dnorm(x, mu_down, sd_down),
+     type="l", lwd=2, col="red",
+     xlab="Lag2", ylab="Density",
+     main="Normal Distributions of Lag2")
+
+lines(x, dnorm(x, mu_up, sd_up),
+      lwd=2, col="blue")
+legend("topright", legend=c("Down", "Up"),
+       col=c("red","blue"), lwd=2)
+
+```
+
+```{r}
+nb.class=predict(nb.fit, Weekly.test)
+table(nb.class, Direction.test)
+correction_nb=mean(nb.class==Direction.test)
+correction_nb
+```
+So, the model predicted up for every observation, which makes sense since the probability of "Up" is higher than probability of "Down" in data set (55.2% > 44.8%). Also, the two Gaussian curves overlap almost perfectly, that is for almost every Lag2 value, the conditional probability of "Up" given Lag2 is greater than the conditional probability of "Down" given Lag2, so Naive Bayes always picks Up.
+```{r}
+# made a percentage of correction table
+results = data.frame(
+  Method = c("Logistic Regression", "LDA", "QDA", "KNN, K=1", "Naive Bayes"),
+  Accuracy = c(correction_glm, correction_lda, correction_qda, correction_knn, correction_nb)
+)
+results
+```
+Based on the result, **LDA has the best performance**. Another observation is that LDA, QDA and Naive Bayes have  identical means for "Up" and "Down". This makes sense since we use the same training data set and variable Lag2, so their means are supposed to be the same. Notice that QDA and Naive Bayes give very similar results in this case. Since we are using only one predictor (Lag2), both methods fit a normal distribution for Lag2 in each class, so their decision rules are almost the same. The Naive Bayes independence assumption doesn’t really matter when there is only one predictor.
+
+**(j) Experiment with different combinations of predictors, including possible transformations and interactions, for each of the
+methods. Report the variables, method, and associated confusion matrix that appears to provide the best results on the held
+out data. Note that you should also experiment with values for
+K in the KNN classifier.**
+
+Since we are trying to predict the next week's return from the previous weeks' returns, so I think the two most recent weeks would give a better prediction. Let us try Lag1, Lag2, and Volume.
+```{r}
+models = list(
+  Direction ~ Lag1 + Lag2,
+  Direction ~ Lag1 + Lag2 + Volume,
+  Direction ~ Lag1 + Lag2 + Lag1:Lag2,
+  Direction ~ poly(Lag2, 2)
+)
+#logistic regression
+acc_lg = numeric(length(models))      # Store accuracies
+conf_lg = vector("list", length(models))  # Store confusion matrices
+
+for (i in 1:length(models)) {
+  
+  formula_i <- models[[i]]
+  
+  glm.fit <- glm(formula_i, data=Weekly, family=binomial, subset=train)
+  
+  glm.probs <- predict(glm.fit, Weekly.test, type="response")
+  glm.pred  <- ifelse(glm.probs > 0.5, "Up", "Down")
+  
+  acc_lg[i]    <- mean(glm.pred == Weekly.test$Direction)
+  conf_lg[[i]] <- table(glm.pred, Weekly.test$Direction)
+}
+
+data_lg=data.frame(
+  Model = sapply(models, function(f) deparse(f)),
+  Accuracy = acc_lg
+)
+best.index_lg = which.max(acc_lg)
+best.model_lg = models[[best.index_lg]]
+best.model_lg
+conf_lg[[best.index_lg]]
+acc_lg[best.index_lg]
+```
+
+```{r}
+# LDA
+conf_lda=vector("list", length(models))
+acc_lda=numeric(length(models))
+for (i in 1:length(models)) {
+  
+  formula_i <- models[[i]]
+lda.fit=lda(formula_i, data=Weekly, subset=train)
+lda.pred=predict(lda.fit, Weekly.test)
+lda.class=lda.pred$class
+conf_lda[[i]]=table(lda.class, Direction.test)
+acc_lda[i]=mean(lda.class==Direction.test)
+}
+data_lda=data.frame(
+  Model = sapply(models, function(f) deparse(f)),
+  Accuracy = acc_lda)
+
+best.index_lda = which.max(acc_lda)
+best.model_lda = models[[best.index_lda]]
+best.model_lda
+conf_lda[[best.index_lda]]
+acc_lda[best.index_lda]
+```
+
+```{r}
+#QDA
+conf_qda=vector("list", length(models))
+acc_qda=numeric(length(models))
+for (i in 1:length(models)) {
+  formula_i = models[[i]]
+qda.fit=qda(formula_i, data=Weekly, subset=train)
+qda.class=predict(qda.fit, Weekly.test)$class # Up - Down
+conf_qda[[i]]=table(qda.class, Direction.test)
+acc_qda[i]=mean(qda.class==Direction.test)
+}
+data_qda=data.frame(
+  Model = sapply(models, function(f) deparse(f)),
+  Accuracy = acc_qda)
+
+best.index_qda = which.max(acc_qda)
+best.model_qda = models[[best.index_qda]]
+best.model_qda
+conf_qda[[best.index_qda]]
+acc_qda[best.index_qda]
+```
+
+```{r}
+#Naive Bayes
+conf_nb=vector("list", length(models))
+acc_nb=numeric(length(models))
+for (i in 1:length(models)) {
+  
+  formula_i <- models[[i]]
+nb.fit=naiveBayes(Direction~Lag2, data=Weekly, subset=train)
+nb.class=predict(nb.fit, Weekly.test)
+conf_nb[[i]]=table(nb.class, Direction.test)
+acc_nb=mean(nb.class==Direction.test)
+}
+data_nb=data.frame(
+  Model = sapply(models, function(f) deparse(f)),
+  Accuracy = acc_nb)
+
+best.index_nb = which.max(acc_nb)
+best.model_nb = models[[best.index_nb]]
+best.model_nb
+conf_nb[[best.index_nb]]
+acc_nb[best.index_nb]
+```
+
+```{r}
+#KNN with cross validation to determine the best K
+train_idx = Weekly$Year < 2009
+Weekly.train =Weekly[train_idx, ]
+Weekly.test  = Weekly[!train_idx, ]
+
+Y_train = Weekly.train$Direction
+K_values = 1:50     
+nfolds = 10
+set.seed(300)
+
+
+data.knn = list()   # Store results for each model
+
+for (m in 1:length(models)) {
+  
+  # Extract predictor names except the response
+  vars = all.vars(models[[m]])[-1]
+  
+  # Create standardized training matrix
+  X_train = scale( Weekly.train[, vars, drop=FALSE] )
+  
+  # Create fold assignments
+  fold_id = sample(rep(1:nfolds, length.out = nrow(X_train)))
+  
+  # Store CV accuracy for each K
+  cv_acc = numeric(length(K_values))
+  
+  for (i in 1:length(K_values)) {
+    
+    k_val = K_values[i]
+    fold_acc = numeric(nfolds)
+    
+    for (f in 1:nfolds) {
+      
+      val_bool = (fold_id == f)
+      train_bool = !val_bool
+      
+      knn_pred = knn(
+        train = X_train[train_bool, , drop=FALSE],
+        test  = X_train[val_bool, , drop=FALSE],
+        cl    = Y_train[train_bool],
+        k     = k_val
+      )
+
+      
+      fold_acc[f] = mean(knn_pred == Y_train[val_bool])
+    }
+    
+    cv_acc[i] = mean(fold_acc)
+  }
+  
+  # Save results for this model
+  data.knn[[m]] = list(
+    formula = models[[m]],
+    cv_accuracy = cv_acc,
+    best_k = K_values[which.max(cv_acc)],
+    best_cv_acc = max(cv_acc)
+  )
+}
+
+cv_vec = sapply(data.knn, function(x) x$best_cv_acc)
+best_index_knn = which.max(cv_vec)
+best_model_knn = data.knn[[best_index_knn]]
+
+cat("Best KNN Model:\n")
+cat("Formula:", deparse(best_model_knn$formula), "\n")
+cat("Best K:", best_model_knn$best_k, "\n")
+cat("Best CV Accuracy:", best_model_knn$best_cv_acc, "\n")
+
+#test new K on the same training set on previous problem
+train = (Weekly$Year < 2009)
+best_vars = c("Lag1", "Lag2", "Volume")
+train.X = scale( Weekly.train[, best_vars] )
+test.X = scale(
+  Weekly.test[, best_vars],
+  center = attr(train.X, "scaled:center"),
+  scale  = attr(train.X, "scaled:scale"))
+Direction.train = Weekly$Direction[train]
+Direction.test  = Weekly$Direction[!train]
+knn.pred=knn(train.X, test.X, Direction.train, k=best_model_knn$best_k)
+
+#confusion table
+conf_knn = table(knn.pred, Direction.test)
+conf_knn
+mean(knn.pred==Direction.test)
+
+```
+I tested: 
+
+  + Direction ~ Lag1 + Lag2
+  
+  + Direction ~ Lag1 + Lag2 + Volume
+  
+  + Direction ~ Lag1 + Lag2 + Lag1:Lag2
+  
+  + Direction ~ poly(Lag2, 2)
+
+using logistic regression, LDA, QDA, and 10 folds cross validation KNN, and Naive Bayes.
+  
+The result indicates that:
+
++ Logistic regression: Direction ~ poly(Lag2, 2)
+
++ LDA: Direction ~ Lag2
+
++ QDA: Direction ~ poly(Lag2, 2)
+
+provides the best performance with correction rate is 62.5%, below is the detail of the model.
+
+```{r}
+#logistic regression
+best.model_lg # model configuration
+acc_lg[best.index_lg] # correction rate
+conf_lg[[best.index_lg]] # confusion matrix
+#
+#QDA
+best.model_qda # model configuration
+conf_qda[[best.index_qda]] # confusion matrix
+acc_qda[best.index_qda] # correction rate
+#
+#LDA
+deparse(Direction ~ Lag2) # model configuration
+table(lda.class, Direction.test) # confusion matrix
+correction_lda # correction rate
+```
+
