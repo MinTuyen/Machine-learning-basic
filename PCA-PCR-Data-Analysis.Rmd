@@ -1,5 +1,5 @@
 ---
-title: "Project #2"
+title: "PCA, PCR, Data Analysis"
 author: "Winter Nguyen"
 date: "`r Sys.Date()`"
 output: pdf_document
